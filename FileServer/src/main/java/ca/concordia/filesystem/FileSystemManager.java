@@ -33,7 +33,7 @@ public FileSystemManager(String filename, int totalSizeBytes) {
     // init in-memory metadata
     this.inodeTable    = new FEntry[MAXFILES];
     this.freeBlockList = new boolean[MAXBLOCKS];
-    this.fNodes        = new FNode[MAXBLOCKS];   // you added this earlier
+    this.fNodes        = new FNode[MAXBLOCKS];
 }
 
     public void createFile(String fileName) throws Exception {  
