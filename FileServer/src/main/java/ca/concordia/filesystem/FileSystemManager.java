@@ -3,6 +3,7 @@ package ca.concordia.filesystem;
 import ca.concordia.filesystem.datastructures.FEntry;
 import ca.concordia.filesystem.datastructures.FNode;
 
+import java.util.Vector;
 import java.io.RandomAccessFile;
 import java.security.KeyStore.Entry;
 import java.util.concurrent.locks.ReentrantLock;
@@ -72,6 +73,19 @@ public FileSystemManager(String filename, int totalSizeBytes) {
             }
   
     }
+}
+
+
+    private FEntry findFileEntry(String name) throws Exception {
+    for (FEntry e : inodeTable)
+        if (e.getFilename().equals(name))
+            return e;
+
+    throw new Exception("ERROR: file " + name + " does not exist");
+}
+
+
+
 
    public void deleteFile(String fileName) throws Exception {
     if (fileName == null || fileName.isEmpty()) {
@@ -131,6 +145,105 @@ public FileSystemManager(String filename, int totalSizeBytes) {
     }
 }
 
+   public void writeFile(String fileName, byte[] contents) throws Exception {
+    globalLock.lock();
+
+    try {
+    
+        FEntry entry = findFileEntry(fileName); 
+
+        int numBlocks = (int)Math.ceil(contents.length / (double) BLOCK_SIZE);
+
+        int start = -1;
+
+        for (int i = 0; i <= MAXBLOCKS - numBlocks; i++) {
+            boolean ok = true;
+
+            for (int j = 0; j < numBlocks; j++) {
+                if (!freeBlockList[i + j]) {
+                    ok = false;
+                    break;
+                }
+            }
+
+            if (ok) {
+                start = i;
+                break;
+            }
+        }
+
+        if (start == -1)
+            throw new Exception("ERROR: file too large");
+
+        int oldStart = entry.getFirstBlock();
+        if (oldStart != -1) {
+            int oldBlocks = (int)Math.ceil(entry.getFilesize() / (double) BLOCK_SIZE);
+
+            for (int i = 0; i < oldBlocks; i++) {
+                freeBlockList[oldStart + i] = true;
+                disk.seek((oldStart + i) * BLOCK_SIZE);
+                disk.write(new byte[BLOCK_SIZE]); 
+            }
+        }
+
+        for (int i = 0; i < numBlocks; i++)
+            freeBlockList[start + i] = false;
+
+        int offset = 0;
+        for (int i = 0; i < numBlocks; i++) {
+            disk.seek((start + i) * BLOCK_SIZE);
+
+            int chunk = Math.min(BLOCK_SIZE, contents.length - offset);
+            disk.write(contents, offset, chunk);
+
+            if (chunk < BLOCK_SIZE)
+                disk.write(new byte[BLOCK_SIZE - chunk]);
+
+            offset += chunk;
+        }
+
+        entry.setFilesize((short) contents.length);
+
+        var field = FEntry.class.getDeclaredField("firstBlock");
+        field.setAccessible(true);
+        field.setShort(entry, (short) start);
+
+    } finally {
+        globalLock.unlock();
+    }
+}
+
+    public byte[] readFile(String fileName) throws Exception {
+    globalLock.lock();
+    try {
+        FEntry entry = findFileEntry(fileName);
+
+        int size = entry.getFilesize();
+        byte[] data = new byte[size];
+
+        int firstBlock = entry.getFirstBlock();
+        if (firstBlock == -1)
+            return data;
+
+        int numBlocks = (int)Math.ceil(size / (double)BLOCK_SIZE);
+
+        int offset = 0;
+
+        for (int i = 0; i < numBlocks; i++) {
+            disk.seek((firstBlock + i) * BLOCK_SIZE);
+
+            int chunk = Math.min(BLOCK_SIZE, size - offset);
+            disk.read(data, offset, chunk);
+
+            offset += chunk;
+        }
+
+        return data;
+
+    } finally {
+        globalLock.unlock();
+    }
+}
 
 public String[] listFiles() {
     //if we later switch to a ReadWriteLock, use readLock here
