@@ -9,4 +9,23 @@ public class FNode {
         this.blockIndex = blockIndex;
         this.next = -1;
     }
+    
+    public int getBlockIndex() {
+        return blockIndex;
+    }
+
+    public int getNextBlock() {
+        return next;
+    }
+        public void markFree() {
+        this.blockIndex = -1;
+        this.next = -1;
+    }
+    public void setBlockIndex(int blockIndex) {
+        this.blockIndex = blockIndex;
+    }
+
+    public void setNextBlock(int next) {        //to mark as free
+        this.next = next;
+    }
 }
