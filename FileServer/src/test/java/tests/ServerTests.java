@@ -1,3 +1,4 @@
+package tests;
 import helpers.ClientRunner;
 import helpers.ServerRunner;
 import org.junit.jupiter.api.AfterAll;

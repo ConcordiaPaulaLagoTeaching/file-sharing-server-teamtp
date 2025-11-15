@@ -9,6 +9,7 @@ public class FNode {
         this.blockIndex = blockIndex;
         this.next = -1;
     }
+
     
     public int getBlockIndex() {
         return blockIndex;
@@ -28,4 +29,5 @@ public class FNode {
     public void setNextBlock(int next) {        //to mark as free
         this.next = next;
     }
+}
 }
