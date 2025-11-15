@@ -143,7 +143,12 @@ private void processCommand(String line, PrintWriter writer) throws Exception {
             break;
 
         case "LIST":
-            writer.println(String.join(" ", fsManager.listFiles()));
+        String[] files = fsManager.listFiles();
+        if (files.length == 0) {
+            writer.println("(no files)");
+        } else {
+            writer.println(String.join(" ", files));
+    }
             break;
 
         case "QUIT":
