@@ -30,4 +30,3 @@ public class FNode {
         this.next = next;
     }
 }
-}
