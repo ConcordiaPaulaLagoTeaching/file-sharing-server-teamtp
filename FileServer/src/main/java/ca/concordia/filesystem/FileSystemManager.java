@@ -3,6 +3,7 @@ package ca.concordia.filesystem;
 import ca.concordia.filesystem.datastructures.FEntry;
 import java.util.Arrays;
 import java.io.RandomAccessFile;
+import java.io.IOException;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class FileSystemManager {
@@ -13,10 +14,10 @@ public class FileSystemManager {
 
     private final RandomAccessFile disk;
 
-    //multiple readers allowed, single writer protected
+    // Multiple readers allowed, single writer exclusive
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
-    //metadata
+    // Metadata
     private final FEntry[] inodeTable;
     private final boolean[] freeBlockList; // true = free, false = used
 
@@ -34,26 +35,33 @@ public class FileSystemManager {
     }
 
     private int findFileIndex(String name) {
-        for (int i = 0; i < inodeTable.length; i++) {   //return index of file in table or -1
-            FEntry e = inodeTable[i];
-            if (e != null && e.getFilename().equals(name)) {
-                return i;
+        lock.readLock().lock();
+        try {
+            for (int i = 0; i < inodeTable.length; i++) {
+                FEntry e = inodeTable[i];
+                if (e != null && e.getFilename().equals(name)) {
+                    return i;
+                }
             }
+            return -1;
+        } finally {
+            lock.readLock().unlock();
         }
-        return -1;
     }
 
-    //vreatefile
     public void createFile(String fileName) throws Exception {
+
         if (fileName == null || fileName.isEmpty())
             throw new IllegalArgumentException("invalid filename");
         if (fileName.length() > 11)
-            throw new IllegalArgumentException("name has more than 11 characters");
+            throw new IllegalArgumentException("Filename too long");
+
+        // Check existence BEFORE acquiring write lock (safe, efficient)
+        if (findFileIndex(fileName) != -1)
+            return;
 
         lock.writeLock().lock();
         try {
-            if (findFileIndex(fileName) != -1) return;
-
             for (int i = 0; i < inodeTable.length; i++) {
                 if (inodeTable[i] == null) {
                     inodeTable[i] = new FEntry(fileName, (short) 0, (short) -1);
@@ -62,42 +70,56 @@ public class FileSystemManager {
             }
 
             throw new IllegalStateException("no more free entries");
+
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    //delete with zero blocsk
     public void deleteFile(String fileName) throws Exception {
+
         if (fileName == null || fileName.isEmpty())
             throw new IllegalArgumentException("invalid filename");
         if (fileName.length() > 11)
-            throw new IllegalArgumentException("filename too large");
+            throw new IllegalArgumentException("filename too long");
 
         int idx = findFileIndex(fileName);
-        if (idx == -1) return;
+        if (idx == -1) return; // ignore missing file
+
+        int start, count;
 
         lock.writeLock().lock();
         try {
             FEntry entry = inodeTable[idx];
-            int start = entry.getFirstBlock();
-            int count = (int) Math.ceil(entry.getFilesize() / (double) BLOCK_SIZE);
+            start = entry.getFirstBlock();
+            count = (int) Math.ceil(entry.getFilesize() / (double) BLOCK_SIZE);
 
-            //free metadata first
+            // Free metadata blocks
             if (start >= 0) {
-                for (int i = 0; i < count; i++) {
+                for (int i = 0; i < count; i++)
                     freeBlockList[start + i] = true;
-                }
             }
-            //remove table entry
+
+            // Remove inode entry
             inodeTable[idx] = null;
 
         } finally {
             lock.writeLock().unlock();
         }
+
+        // Clear blocks on disk AFTER freeing metadata
+        try {
+            if (start >= 0) {
+                for (int i = 0; i < count; i++) {
+                    disk.seek((start + i) * BLOCK_SIZE);
+                    disk.write(new byte[BLOCK_SIZE]);
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Disk write error during delete", e);
+        }
     }
 
-    //write contents to file   im using contiguous allocation here
     public void writeFile(String fileName, byte[] contents) throws Exception {
         int fileIdx = findFileIndex(fileName);
         if (fileIdx == -1)
@@ -110,7 +132,7 @@ public class FileSystemManager {
         try {
             FEntry entry = inodeTable[fileIdx];
 
-            //free old blocks
+            // Free old blocks
             int oldStart = entry.getFirstBlock();
             int oldCount = (int) Math.ceil(entry.getFilesize() / (double) BLOCK_SIZE);
 
@@ -119,7 +141,7 @@ public class FileSystemManager {
                     freeBlockList[oldStart + i] = true;
             }
 
-            //find new contiguous space
+            // Find new contiguous space
             for (int i = 0; i <= MAXBLOCKS - newCount; i++) {
                 boolean ok = true;
                 for (int j = 0; j < newCount; j++) {
@@ -137,12 +159,11 @@ public class FileSystemManager {
             if (newStart == -1)
                 throw new Exception("file too large");
 
-            //mark new blocks
-            for (int i = 0; i < newCount; i++) {
+            // Mark new blocks used
+            for (int i = 0; i < newCount; i++)
                 freeBlockList[newStart + i] = false;
-            }
 
-            //ppdate metadata
+            // Update metadata
             entry.setFilesize((short) contents.length);
             entry.setFirstBlock((short) newStart);
 
@@ -150,7 +171,7 @@ public class FileSystemManager {
             lock.writeLock().unlock();
         }
 
-        //write to disk
+        // Write to disk (outside lock)
         int offset = 0;
         for (int i = 0; i < newCount; i++) {
             disk.seek((newStart + i) * BLOCK_SIZE);
@@ -165,10 +186,10 @@ public class FileSystemManager {
         }
     }
 
-    //eead file
     public byte[] readFile(String fileName) throws Exception {
-        lock.readLock().lock();
         int start, size;
+
+        lock.readLock().lock();
         try {
             int idx = findFileIndex(fileName);
             if (idx == -1)
@@ -182,7 +203,8 @@ public class FileSystemManager {
             lock.readLock().unlock();
         }
 
-        if (start < 0) return new byte[0];
+        if (start < 0)
+            return new byte[0];
 
         byte[] data = new byte[size];
         int blocks = (int) Math.ceil(size / (double) BLOCK_SIZE);
@@ -210,3 +232,5 @@ public class FileSystemManager {
         }
     }
 }
+   
+
